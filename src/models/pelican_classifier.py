@@ -62,7 +62,7 @@ class PELICANClassifier(nn.Module):
         self.message_layer = MessageNet(num_channels_m_out, activation=activation, ir_safe=ir_safe, batchnorm=batchnorm, device=device, dtype=dtype)       
         self.eq2to0 = Eq2to0(num_channels_m_out[-1], num_channels2[0] if mlp_out else 2, activate_agg=activate_agg2, activate_lin=activate_lin2, activation = activation, ir_safe=ir_safe, config=config2, average_nobj=average_nobj, device = device, dtype = dtype)
         if mlp_out:
-            self.mlp_out = BasicMLP(self.num_channels2 + [2], activation=activation, ir_safe=ir_safe, dropout = False, batchnorm = False, device=device, dtype=dtype)
+            self.mlp_out = BasicMLP(self.num_channels2 + [1], activation='sigmoid', ir_safe=ir_safe, dropout = False, batchnorm = False, device=device, dtype=dtype)
 
         self.apply(init_weights)
 
@@ -71,7 +71,7 @@ class PELICANClassifier(nn.Module):
         logging.info('Model initialized. Number of parameters: {}'.format(sum(p.nelement() for p in self.parameters())))
         logging.info('_________________________\n')
 
-    def forward(self, data, covariance_test=False):
+    def forward(self, Pmu, particle_mask, edge_mask, scalars=None, covariance_test=False):
         """
         Runs a forward pass of the network.
 
@@ -89,7 +89,7 @@ class PELICANClassifier(nn.Module):
             The class predicted by the classifier (0 or 1) is given by output.argmax(dim=1).
         """
         # Get and prepare the data
-        particle_scalars, particle_mask, edge_mask, event_momenta = self.prepare_input(data)
+        particle_scalars, particle_mask, edge_mask, event_momenta = self.prepare_input(Pmu, particle_mask, edge_mask, scalars)
 
         # Calculate spherical harmonics and radial functions
         num_particle = particle_mask.shape[1]
@@ -137,7 +137,7 @@ class PELICANClassifier(nn.Module):
         else:
             return prediction
 
-    def prepare_input(self, data):
+    def prepare_input(self, Pmu, particle_mask, edge_mask, scalars=None):
         """
         Extracts input from data class
 
@@ -159,17 +159,17 @@ class PELICANClassifier(nn.Module):
         """
         device, dtype = self.device, self.dtype
 
-        particle_ps = data['Pmu'].to(device, dtype)
+        _particle_ps = Pmu.to(device, dtype)
 
-        data['Pmu'].requires_grad_(True)
-        particle_mask = data['particle_mask'].to(device, torch.bool)
-        edge_mask = data['edge_mask'].to(device, torch.bool)
+        _particle_ps.requires_grad_(True)
+        _particle_mask = particle_mask.to(device, torch.bool)
+        _edge_mask = edge_mask.to(device, torch.bool)
 
-        if 'scalars' in data.keys():
-            scalars = data['scalars'].to(device, dtype)
+        if scalars is not None:
+            _scalars = scalars.to(device, dtype)
         else:
-            scalars = normsq4(particle_ps).abs().sqrt().unsqueeze(-1)
-        return scalars, particle_mask, edge_mask, particle_ps
+            _scalars = normsq4(_particle_ps).abs().sqrt().unsqueeze(-1)
+        return _scalars, _particle_mask, _edge_mask, _particle_ps
 
 def expand_var_list(var):
     if type(var) is list:
